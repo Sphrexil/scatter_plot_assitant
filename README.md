@@ -22,7 +22,7 @@ A Python/Tkinter scatter plot tool with ternary diagram support. Export vector g
 ## Requirements
 
 ```bash
-pip install matplotlib pandas numpy pywin32 mpltern
+pip install matplotlib pandas numpy pywin32 mpltern ttkbootstrap
 ```
 
 ## Usage
@@ -100,7 +100,7 @@ Python/Tkinter 散点图工具，支持三元图，可直接导出矢量图到 C
 ## 环境要求
 
 ```bash
-pip install matplotlib pandas numpy pywin32 mpltern
+pip install matplotlib pandas numpy pywin32 mpltern ttkbootstrap
 ```
 
 ## 使用方法

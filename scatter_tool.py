@@ -10,7 +10,9 @@
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, font
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from tkinter import filedialog, messagebox, font
 import pandas as pd
 import numpy as np
 import matplotlib
@@ -78,16 +80,14 @@ def copy_emf_to_clipboard(emf_bytes: bytes):
 # ---------- Main Application ----------
 class ScatterTool:
     def __init__(self):
-        self.root = tk.Tk()
+        self.root = ttk.Window(themename="flatly")
         self.root.title("散点图工具 · Scatter → CDR")
         self.root.geometry("1280x860")
-        self._style = ttk.Style()
-        self._style.theme_use("vista")
         self.root.minsize(960, 640)
 
         # data
         self.df: pd.DataFrame | None = None
-        self.status_var = tk.StringVar(value="就绪 · Ready [v3]")
+        self.status_var = tk.StringVar(value="就绪 · Ready [v4]")
         self.group_colors: dict[str, str] = {}  # group name → hex color
         self.palettes: list[dict] = []          # [{"name": "...", "colors": [...]}, ...]
         self.current_palette_name = ""
@@ -102,21 +102,21 @@ class ScatterTool:
         toolbar = ttk.Frame(self.root, padding=(8, 4))
         toolbar.pack(side=tk.TOP, fill=tk.X)
 
-        ttk.Button(toolbar, text="📂 打开 CSV", command=self.load_csv).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="✏️ 手动输入", command=self.manual_input).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="📋 从剪贴板粘贴", command=self.paste_from_clipboard).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="📂 打开 CSV", command=self.load_csv, bootstyle="outline-primary").pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="✏️ 手动输入", command=self.manual_input, bootstyle="outline-secondary").pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="📋 从剪贴板粘贴", command=self.paste_from_clipboard, bootstyle="outline-secondary").pack(side=tk.LEFT, padx=2)
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
-        ttk.Button(toolbar, text="📄 导出 SVG", command=lambda: self.export("svg")).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="📄 导出 PDF", command=lambda: self.export("pdf")).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="🖼️ 导出 PNG", command=lambda: self.export("png")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="📄 导出 SVG", command=lambda: self.export("svg"), bootstyle="outline-info").pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="📄 导出 PDF", command=lambda: self.export("pdf"), bootstyle="outline-info").pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="🖼️ 导出 PNG", command=lambda: self.export("png"), bootstyle="outline-info").pack(side=tk.LEFT, padx=2)
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
-        self.svg_btn = ttk.Button(toolbar, text="📋 复制 SVG 到剪贴板（CDR 粘贴）", command=self.copy_to_clipboard)
+        self.svg_btn = ttk.Button(toolbar, text="📋 复制 SVG 到剪贴板（CDR 粘贴）", command=self.copy_to_clipboard, bootstyle="warning")
         self.svg_btn.pack(side=tk.LEFT, padx=2)
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
         ttk.Label(toolbar, textvariable=self.status_var, foreground="#555").pack(side=tk.RIGHT, padx=8)
 
         # -- main paned window --
-        paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        paned = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
         paned.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=4, pady=2)
 
         # left: plot
@@ -148,7 +148,7 @@ class ScatterTool:
         row = 0
         # ---------- Mode switch ----------
         self.mode_var = tk.StringVar(value="scatter")
-        mode_frame = ttk.LabelFrame(f, text="图表模式", padding=(4, 2))
+        mode_frame = ttk.LabelFrame(f, text="图表模式")
         mode_frame.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4))
         ttk.Radiobutton(mode_frame, text="散点图 (X/Y)", variable=self.mode_var,
                         value="scatter", command=self._on_mode_switch).pack(side=tk.LEFT, padx=2)
@@ -283,7 +283,7 @@ class ScatterTool:
         row += 1
 
         # ---------- Group colors ----------
-        self._color_lf = ttk.LabelFrame(f, text="分组颜色", padding=(4, 2))
+        self._color_lf = ttk.LabelFrame(f, text="分组颜色")
         self._color_lf.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4))
 
         # palette selector row
@@ -323,7 +323,7 @@ class ScatterTool:
         ttk.Separator(f, orient=tk.HORIZONTAL).grid(row=row, column=0, columnspan=2,
                                                      sticky=tk.EW, pady=6)
         row += 1
-        self.update_btn = ttk.Button(f, text="🔄 更新绘图", command=self._auto_plot)
+        self.update_btn = ttk.Button(f, text="🔄 更新绘图", command=self._auto_plot, bootstyle="success")
         self.update_btn.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=4)
 
         # stretch
@@ -423,7 +423,7 @@ class ScatterTool:
             except Exception as e:
                 messagebox.showerror("解析失败", str(e))
 
-        ttk.Button(w, text="确定", command=do_import).pack(pady=6)
+        ttk.Button(w, text="确定", command=do_import, bootstyle="primary").pack(pady=6)
 
     def paste_from_clipboard(self):
         try:
@@ -607,7 +607,7 @@ class ScatterTool:
                 self._save_palettes()
                 self._refresh_palette_combo()
                 w.destroy()
-        ttk.Button(w, text="保存", command=do_save).pack(pady=(8, 8))
+        ttk.Button(w, text="保存", command=do_save, bootstyle="success").pack(pady=(8, 8))
 
     def _on_delete_palette(self):
         if len(self.palettes) <= 1:
