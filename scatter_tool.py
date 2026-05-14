@@ -701,7 +701,7 @@ class ScatterTool:
         fw = self._safe_float(self.fig_w.get(), 8)
         fh = self._safe_float(self.fig_h.get(), 5.5)
         ms = self._safe_float(self.marker_size.get(), 125)
-        alpha = self._safe_float(self.alpha.get(), 1.0)
+        alpha = max(0.0, min(1.0, self._safe_float(self.alpha.get(), 1.0)))
         order = self._safe_int(self.reg_order.get(), 1)
 
         self.fig.set_size_inches(fw, fh)
@@ -846,7 +846,7 @@ class ScatterTool:
             return
 
         ms = self._safe_float(self.marker_size.get(), 125)
-        alpha = self._safe_float(self.alpha.get(), 1.0)
+        alpha = max(0.0, min(1.0, self._safe_float(self.alpha.get(), 1.0)))
 
         # read data
         a_raw = self._safe_numeric(self.df[a_col])
