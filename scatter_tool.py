@@ -122,9 +122,25 @@ class ScatterTool:
         self._plot_frame = ttk.Frame(main)
         self._plot_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        cfg_frame = ttk.Frame(main, width=280)
-        cfg_frame.pack(side=tk.RIGHT, fill=tk.Y)
-        cfg_frame.pack_propagate(False)
+        # right panel with vertical scroll
+        cfg_outer = ttk.Frame(main, width=280)
+        cfg_outer.pack(side=tk.RIGHT, fill=tk.Y)
+        cfg_outer.pack_propagate(False)
+
+        cfg_canvas = tk.Canvas(cfg_outer, width=278, highlightthickness=0)
+        cfg_scroll = ttk.Scrollbar(cfg_outer, orient=tk.VERTICAL, command=cfg_canvas.yview)
+        cfg_frame = ttk.Frame(cfg_canvas, width=278)
+        cfg_frame.bind("<Configure>", lambda e: cfg_canvas.configure(scrollregion=cfg_canvas.bbox("all")))
+        cfg_canvas.create_window((0, 0), window=cfg_frame, anchor=tk.NW)
+        cfg_canvas.configure(yscrollcommand=cfg_scroll.set)
+        cfg_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        cfg_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # mousewheel scroll on canvas
+        def _on_mousewheel(event):
+            cfg_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        cfg_canvas.bind("<Enter>", lambda e: cfg_canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        cfg_canvas.bind("<Leave>", lambda e: cfg_canvas.unbind_all("<MouseWheel>"))
 
         self._build_plot_area()
         self._build_config_panel(cfg_frame)
