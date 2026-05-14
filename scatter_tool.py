@@ -84,7 +84,6 @@ class ScatterTool:
         self.root.title("散点图工具 · Scatter → CDR")
         self.root.geometry("1280x860")
         self.root.minsize(960, 640)
-        self.root.pack_propagate(False)
 
         # data
         self.df: pd.DataFrame | None = None
@@ -116,17 +115,16 @@ class ScatterTool:
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
         ttk.Label(toolbar, textvariable=self.status_var, foreground="#555").pack(side=tk.RIGHT, padx=8)
 
-        # -- main paned window --
-        paned = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
-        paned.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=4, pady=2)
+        # -- main layout: plot (left, fill) + config (right, fixed width) --
+        main = ttk.Frame(self.root)
+        main.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=4, pady=2)
 
-        # left: plot
-        self._plot_frame = ttk.Frame(paned)
-        paned.add(self._plot_frame, weight=3)
+        self._plot_frame = ttk.Frame(main)
+        self._plot_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # right: config panel
-        cfg_frame = ttk.Frame(paned, width=260)
-        paned.add(cfg_frame, weight=1)
+        cfg_frame = ttk.Frame(main, width=280)
+        cfg_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        cfg_frame.pack_propagate(False)
 
         self._build_plot_area()
         self._build_config_panel(cfg_frame)
@@ -362,11 +360,12 @@ class ScatterTool:
         for name, color in self.group_colors.items():
             row_frame = ttk.Frame(self._color_inner)
             row_frame.pack(fill=tk.X, pady=1)
-            # color swatch button (use Frame to avoid theme overriding bg)
-            sw = tk.Frame(row_frame, bg=color, relief=tk.RAISED, bd=2,
-                          width=24, height=18, cursor="hand2")
+            # color swatch (Canvas with rectangle, immune to theme bg override)
+            sw = tk.Canvas(row_frame, width=24, height=18,
+                           highlightthickness=1, highlightbackground="#888",
+                           cursor="hand2")
+            sw.create_rectangle(0, 0, 24, 18, fill=color, outline="")
             sw.pack(side=tk.LEFT, padx=(0, 6))
-            sw.pack_propagate(False)
             sw.bind("<Button-1>", lambda e, n=name: self._on_color_pick(n))
             # group name
             ttk.Label(row_frame, text=name, font=("Segoe UI", 9)).pack(side=tk.LEFT)
