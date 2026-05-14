@@ -84,6 +84,7 @@ class ScatterTool:
         self.root.title("散点图工具 · Scatter → CDR")
         self.root.geometry("1280x860")
         self.root.minsize(960, 640)
+        self.root.pack_propagate(False)
 
         # data
         self.df: pd.DataFrame | None = None
@@ -361,10 +362,11 @@ class ScatterTool:
         for name, color in self.group_colors.items():
             row_frame = ttk.Frame(self._color_inner)
             row_frame.pack(fill=tk.X, pady=1)
-            # color swatch button
-            sw = tk.Label(row_frame, text="  ", bg=color, relief=tk.RAISED, width=4,
-                          cursor="hand2")
+            # color swatch button (use Frame to avoid theme overriding bg)
+            sw = tk.Frame(row_frame, bg=color, relief=tk.RAISED, bd=2,
+                          width=24, height=18, cursor="hand2")
             sw.pack(side=tk.LEFT, padx=(0, 6))
+            sw.pack_propagate(False)
             sw.bind("<Button-1>", lambda e, n=name: self._on_color_pick(n))
             # group name
             ttk.Label(row_frame, text=name, font=("Segoe UI", 9)).pack(side=tk.LEFT)
