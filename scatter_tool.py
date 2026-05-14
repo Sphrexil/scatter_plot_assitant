@@ -80,7 +80,7 @@ def copy_emf_to_clipboard(emf_bytes: bytes):
 # ---------- Main Application ----------
 class ScatterTool:
     def __init__(self):
-        self.root = ttk.Window(themename="flatly")
+        self.root = ttk.Window(themename="minty")
         self.root.title("散点图工具 · Scatter → CDR")
         self.root.geometry("1280x860")
         self.root.minsize(960, 640)
