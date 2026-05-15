@@ -1,0 +1,8 @@
+matplotlib
+mpltern
+numpy
+openpyxl
+pandas
+pywin32; platform_system == "Windows"
+ttkbootstrap
+

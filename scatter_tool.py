@@ -12,19 +12,19 @@
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from tkinter import filedialog, messagebox, font
+from tkinter import filedialog, messagebox
 import pandas as pd
 import numpy as np
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from matplotlib import ticker as mpl_ticker
-import matplotlib.ticker as ticker
 import io
 import os
-import re
-import webbrowser
+import struct
+
+from plot_data import prepare_ternary_data, prepare_xy_data
+from svg_cdr import svg_for_cdr
 
 # ---------- Windows clipboard helpers ----------
 try:
@@ -37,24 +37,61 @@ except ImportError:
 WMF_ENABLED = False  # set True if you install svg2emf / Pillow + cairo
 
 
-def copy_svg_to_clipboard(svg_bytes: bytes):
-    """Put raw SVG text onto clipboard as CF_TEXT (CDR accepts SVG paste)."""
+def _png_to_dib(png_bytes: bytes) -> bytes:
+    """Convert PNG bytes to a CF_DIB payload for clipboard fallback."""
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    width, height = img.size
+    pixels = img.tobytes("raw", "BGRA")
+    header = struct.pack(
+        "<IiiHHIIiiII",
+        40,          # BITMAPINFOHEADER size
+        width,
+        -height,     # top-down DIB
+        1,           # planes
+        32,          # bit count
+        0,           # BI_RGB
+        len(pixels), # size image
+        2835,        # x pixels per meter
+        2835,        # y pixels per meter
+        0,
+        0,
+    )
+    return header + pixels
+
+
+def copy_svg_to_clipboard(svg_bytes: bytes, preview_png_bytes: bytes | None = None):
+    """Put SVG plus bitmap fallback onto clipboard for CDR paste."""
     if not _HAS_WIN32:
         return False
+    opened = False
     try:
         wc.OpenClipboard()
+        opened = True
         wc.EmptyClipboard()
-        wc.SetClipboardData(win32con.CF_TEXT, svg_bytes)
-        wc.CloseClipboard()
+        svg_format = wc.RegisterClipboardFormat("image/svg+xml")
+        wc.SetClipboardData(svg_format, svg_bytes)
+
+        if preview_png_bytes:
+            dib = _png_to_dib(preview_png_bytes)
+            wc.SetClipboardData(win32con.CF_DIB, dib)
         return True
     except Exception:
         return False
+    finally:
+        if opened:
+            try:
+                wc.CloseClipboard()
+            except Exception:
+                pass
 
 
 def copy_emf_to_clipboard(emf_bytes: bytes):
     """Put EMF data onto clipboard as CF_ENHMETAFILE."""
     if not _HAS_WIN32:
         return False
+    opened = False
     try:
         import ctypes
         from ctypes import windll
@@ -67,27 +104,35 @@ def copy_emf_to_clipboard(emf_bytes: bytes):
         if not hemf:
             return False
         wc.OpenClipboard()
+        opened = True
         wc.EmptyClipboard()
         wc.SetClipboardData(win32con.CF_ENHMETAFILE, hemf)
-        wc.CloseClipboard()
-        windll.gdi32.DeleteEnhMetaFile(hemf)
+        hemf = None
         os.remove(tmp)
         return True
     except Exception:
         return False
+    finally:
+        if opened:
+            try:
+                wc.CloseClipboard()
+            except Exception:
+                pass
 
 
 # ---------- Main Application ----------
 class ScatterTool:
+    VERSION = "1.2.0"
+
     def __init__(self):
         self.root = ttk.Window(themename="minty")
-        self.root.title("散点图工具 · Scatter → CDR")
+        self.root.title(f"散点图工具 · Scatter → CDR v{self.VERSION}")
         self.root.geometry("1280x860")
         self.root.minsize(960, 640)
 
         # data
         self.df: pd.DataFrame | None = None
-        self.status_var = tk.StringVar(value="就绪 · Ready [v4]")
+        self.status_var = tk.StringVar(value=f"就绪 · Ready [v{self.VERSION}]")
         self.group_colors: dict[str, str] = {}  # group name → hex color
         self.palettes: list[dict] = []          # [{"name": "...", "colors": [...]}, ...]
         self.current_palette_name = ""
@@ -550,6 +595,12 @@ class ScatterTool:
         s = pd.to_numeric(series, errors="coerce")
         return s.dropna()
 
+    def _apply_figure_size(self):
+        """Apply the configured physical figure size before drawing/exporting."""
+        fw = self._safe_float(self.fig_w.get(), 8)
+        fh = self._safe_float(self.fig_h.get(), 6.2)
+        self.fig.set_size_inches(fw, fh)
+
     # ========== Palette management ==========
     _PALETTE_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   ".lunzi_palettes.json")
@@ -656,8 +707,8 @@ class ScatterTool:
                     self.palettes.append(item)
             self._save_palettes()
             self._refresh_palette_combo()
-        except Exception:
-            pass
+        except Exception as e:
+            messagebox.showerror("导入失败", str(e))
 
     # ========== Group colors ==========
     def _ensure_group_colors(self, group_names):
@@ -691,20 +742,17 @@ class ScatterTool:
                 self._do_ternary_plot()
             else:
                 self._do_plot()
-            if self.mode_var.get() != "ternary":
-                self._refresh_color_pickers()
+            self._refresh_color_pickers()
         except Exception as e:
             self.status_var.set(f"⚠️ 绘图出错: {e}")
 
     def _do_plot(self):
         # safe param reads
-        fw = self._safe_float(self.fig_w.get(), 8)
-        fh = self._safe_float(self.fig_h.get(), 5.5)
         ms = self._safe_float(self.marker_size.get(), 125)
         alpha = max(0.0, min(1.0, self._safe_float(self.alpha.get(), 1.0)))
         order = self._safe_int(self.reg_order.get(), 1)
 
-        self.fig.set_size_inches(fw, fh)
+        self._apply_figure_size()
         self.ax.clear()
 
         x_col = self.col_x.get()
@@ -716,20 +764,16 @@ class ScatterTool:
             self.canvas.draw()
             return
 
-        # convert data columns to numeric, drop invalid
-        x_data = self._safe_numeric(self.df[x_col])
-        y_data = self._safe_numeric(self.df[y_col])
+        plot_df = prepare_xy_data(self.df, x_col, y_col, g_col)
 
-        if x_data.empty or y_data.empty:
+        if plot_df.empty:
             self.ax.set_title("所选列没有有效的数值数据")
             self.canvas.draw()
             self.status_var.set("⚠️ 所选列无有效数值数据")
             return
 
-        # align index for group merge
-        valid_idx = x_data.index.intersection(y_data.index)
-        xv = x_data.loc[valid_idx].values
-        yv = y_data.loc[valid_idx].values
+        xv = plot_df["_x"].to_numpy()
+        yv = plot_df["_y"].to_numpy()
         n_plotted = len(xv)
 
         # point outline
@@ -737,19 +781,17 @@ class ScatterTool:
         lw = 0.5 if self.show_outline.get() else 0
 
         if g_col and g_col in self.df.columns:
-            groups = self.df.loc[valid_idx].groupby(g_col, sort=False)
+            groups = plot_df.groupby("_group", sort=False)
             group_names_list = [str(name) for name, _ in groups]
             self._ensure_group_colors(group_names_list)
-            for name, grp in self.df.loc[valid_idx].groupby(g_col, sort=False):
+            for name, grp in plot_df.groupby("_group", sort=False):
                 c = self.group_colors.get(str(name), plt_cmap()[0])
-                gx = self._safe_numeric(grp[x_col]).values
-                gy = self._safe_numeric(grp[y_col]).values
-                # align individually
-                g_min = min(len(gx), len(gy))
-                self.ax.scatter(gx[:g_min], gy[:g_min], s=ms, alpha=alpha, c=[c],
+                self.ax.scatter(grp["_x"].to_numpy(), grp["_y"].to_numpy(),
+                                s=ms, alpha=alpha, c=[c],
                                 label=str(name), edgecolors=ec, linewidths=lw, zorder=3)
             self.ax.legend(fontsize=8, framealpha=0.8, markerscale=0.7)
         else:
+            self.group_colors = {}
             self.ax.scatter(xv, yv, s=ms, alpha=alpha, c="#2864a0",
                             edgecolors=ec, linewidths=lw, zorder=3)
 
@@ -788,6 +830,7 @@ class ScatterTool:
             _set_ticks_from_min(self.ax.yaxis, y_min, y_max)
 
         # regression
+        reg_warning = ""
         if self.show_reg.get() and len(xv) > 3:
             try:
                 coeffs = np.polyfit(xv, yv, order)
@@ -804,8 +847,8 @@ class ScatterTool:
                              transform=self.ax.transAxes, fontsize=9,
                              verticalalignment="bottom", horizontalalignment="right",
                              bbox=dict(boxstyle="round,pad=0.3", fc="wheat", alpha=0.7))
-            except Exception:
-                pass  # skip regression on error
+            except Exception as e:
+                reg_warning = f" | 趋势线跳过: {e}"
 
         # labels (larger than tick labels which are 13)
         self.ax.set_xlabel(self.label_x.get() or x_col, fontsize=20, fontname="Arial")
@@ -830,7 +873,7 @@ class ScatterTool:
 
         self.fig.tight_layout()
         self.canvas.draw()
-        self.status_var.set(f"✅ 已更新 | {n_plotted} 点")
+        self.status_var.set(f"✅ 已更新 | {n_plotted} 点{reg_warning}")
 
     # ========== Ternary Plot ==========
     def _do_ternary_plot(self):
@@ -848,27 +891,19 @@ class ScatterTool:
         ms = self._safe_float(self.marker_size.get(), 125)
         alpha = max(0.0, min(1.0, self._safe_float(self.alpha.get(), 1.0)))
 
-        # read data
-        a_raw = self._safe_numeric(self.df[a_col])
-        b_raw = self._safe_numeric(self.df[b_col])
-        c_raw = self._safe_numeric(self.df[c_col])
-        valid = a_raw.index.intersection(b_raw.index).intersection(c_raw.index)
-        if len(valid) < 3:
+        self._apply_figure_size()
+        self.ax.clear()
+
+        tri_df = prepare_ternary_data(self.df, a_col, b_col, c_col, g_col)
+        if len(tri_df) < 3:
             self.ax.clear()
-            self.ax.set_title("有效数据不足 3 个点")
+            self.ax.set_title("有效正值数据不足 3 个点")
             self.canvas.draw()
             return
 
-        A = a_raw.loc[valid].values
-        B = b_raw.loc[valid].values
-        C = c_raw.loc[valid].values
-        pos = (A > 0) & (B > 0) & (C > 0)
-        if pos.sum() < 3:
-            self.ax.clear()
-            self.ax.set_title("正值数据不足 3 个点")
-            self.canvas.draw()
-            return
-        A, B, C = A[pos], B[pos], C[pos]
+        A = tri_df["_a"].to_numpy()
+        B = tri_df["_b"].to_numpy()
+        C = tri_df["_c"].to_numpy()
 
         self.ax.set_facecolor("#ffffff")
 
@@ -915,10 +950,10 @@ class ScatterTool:
         # ---- 2. tick step in original values ----
         step = 0.1
         max_span = max(t_hi - t_lo, l_hi - l_lo, r_hi - r_lo)
-        if max_span < 0.2:
-            step = 0.05
-        elif max_span < 0.06:
+        if max_span < 0.06:
             step = 0.02
+        elif max_span < 0.2:
+            step = 0.05
 
         def _real_ticks(lo, hi, s):
             start = np.floor(lo / s) * s
@@ -973,24 +1008,24 @@ class ScatterTool:
 
         # ---- 5. plot data in transformed coords ----
         if g_col and g_col in self.df.columns:
-            df_sub = self.df.loc[valid[pos]]
-            for name, grp in df_sub.groupby(g_col, sort=False):
-                ga = self._safe_numeric(grp[a_col]).values
-                gb = self._safe_numeric(grp[b_col]).values
-                gc = self._safe_numeric(grp[c_col]).values
+            group_names_list = [str(name) for name, _ in tri_df.groupby("_group", sort=False)]
+            self._ensure_group_colors(group_names_list)
+            for name, grp in tri_df.groupby("_group", sort=False):
+                ga = grp["_a"].to_numpy()
+                gb = grp["_b"].to_numpy()
+                gc = grp["_c"].to_numpy()
                 gs = ga + gb + gc
-                if gs.min() <= 0:
-                    continue
                 gt0, gl0, gr0 = gc/gs, ga/gs, gb/gs
                 ga_t = (gt0 - t_lo) / D
                 gb_l = (gl0 - l_lo) / D
                 gg_r = (gr0 - r_lo) / D
-                ci = plt_cmap()[len(self.ax.collections) % len(plt_cmap())]
+                ci = self.group_colors.get(str(name), plt_cmap()[0])
                 self.ax.scatter(ga_t, gb_l, gg_r, s=adjusted_ms,
                                 alpha=alpha, c=[ci], label=str(name),
                                 edgecolors='face', linewidths=0, zorder=3)
             self.ax.legend(fontsize=9, framealpha=0.8, markerscale=0.7)
         else:
+            self.group_colors = {}
             self.ax.scatter(a_t, b_l, g_r, s=adjusted_ms, alpha=alpha,
                             c='#2864a0', edgecolors='face', linewidths=0, zorder=3)
 
@@ -1050,6 +1085,7 @@ class ScatterTool:
         if not p:
             return
         try:
+            self._apply_figure_size()
             if fmt == "svg":
                 # use text elements (not paths) so CDR keeps text editable
                 matplotlib.rcParams['svg.fonttype'] = 'none'
@@ -1080,11 +1116,15 @@ class ScatterTool:
 
         svg = io.BytesIO()
         try:
+            self._apply_figure_size()
             matplotlib.rcParams['svg.fonttype'] = 'none'
             self.fig.savefig(svg, format="svg", bbox_inches=None,
                              facecolor=self.fig.get_facecolor())
             svg_bytes = svg_for_cdr(svg.getvalue())
-            ok = copy_svg_to_clipboard(svg_bytes)
+            preview = io.BytesIO()
+            self.fig.savefig(preview, format="png", dpi=200, bbox_inches=None,
+                             facecolor=self.fig.get_facecolor())
+            ok = copy_svg_to_clipboard(svg_bytes, preview_png_bytes=preview.getvalue())
             if ok:
                 self.status_var.set("📋 SVG 已复制到剪贴板（无 PowerClip，可直接在 CDR 中编辑）")
             else:
@@ -1125,108 +1165,6 @@ def _set_ticks_from_min(axis, data_min, data_max):
         axis.axes.set_xlim(first_tick, last_tick)
     else:
         axis.axes.set_ylim(first_tick, last_tick)
-
-
-# ========== SVG Post-processing for CorelDRAW ==========
-
-def _attr(tag: str, name: str) -> str:
-    """Extract attribute value from an XML tag string."""
-    m = re.search(rf'\s{name}="([^"]*)"', tag)
-    return m.group(1) if m else ""
-
-
-def svg_for_cdr(svg_bytes: bytes) -> bytes:
-    """Post-process matplotlib SVG for clean CDR import.
-
-    - Removes clip-path attributes (causes PowerClip in CDR).
-    - Expands <use> references to actual <path> elements
-      (so points are independently editable, not linked symbols).
-    """
-    try:
-        text = svg_bytes.decode("utf-8")
-
-        # 1) Collect ALL named paths/shapes from ALL <defs> blocks
-        defs_map = {}
-        # There can be multiple <defs> blocks nested at different levels
-        defs_blocks = re.finditer(r"<defs>(.*?)</defs>", text, re.DOTALL)
-        for db in defs_blocks:
-            content = db.group(1)
-            # Extract id -> tag+attrs
-            for m in re.finditer(
-                r'<(\w+)\s+id="([^"]+)"\s+([^>]*?)/?\s*>', content, re.DOTALL
-            ):
-                tag, id_, attrs = m.groups()
-                if id_ and tag != "style":
-                    defs_map[id_] = f"<{tag} {attrs}/>"
-
-        # 2) Remove all clip-path attributes
-        text = re.sub(r'\s*clip-path="url\([^)]+\)"', "", text)
-
-        # 3) Expand <use> elements
-        def expand_use(m):
-            tag = m.group(0)
-            href = _attr(tag, "xlink:href") or _attr(tag, "href")
-            if not (href and href.startswith("#")):
-                return tag
-            ref_id = href[1:]
-            if ref_id not in defs_map:
-                return tag
-            ref_content = defs_map[ref_id]
-            x = _attr(tag, "x")
-            y = _attr(tag, "y")
-            use_style = _attr(tag, "style")
-            use_transform = _attr(tag, "transform")
-
-            # Build translate from x,y
-            if x and y:
-                pos_tr = f'translate({x},{y})'
-            elif x:
-                pos_tr = f'translate({x},0)'
-            elif y:
-                pos_tr = f'translate(0,{y})'
-            else:
-                pos_tr = ""
-
-            # Parse ref_content into components: opening tag, attrs, closing
-            # We need to safely inject x/y as translate + merge transform + style
-            tag_match = re.match(r'^<(\w+)\s+(.*?)(/?)>$', ref_content.strip(), re.DOTALL)
-            if not tag_match:
-                return tag
-            inner_tag, attrs_raw, self_close = tag_match.groups()
-
-            # Parse existing attributes
-            existing = {}
-            for a in re.finditer(r'(\w[-:\w]*)\s*=\s*"([^"]*)"', attrs_raw):
-                existing[a.group(1)] = a.group(2)
-
-            # Merge style
-            if use_style and "style" in existing:
-                # Append use style to existing style
-                existing["style"] = existing["style"] + "; " + use_style
-            elif use_style:
-                existing["style"] = use_style
-
-            # Merge transforms: pos_tr first, then use_transform, then existing transform
-            transforms = []
-            if pos_tr:
-                transforms.append(pos_tr)
-            if use_transform:
-                transforms.append(use_transform)
-            if "transform" in existing:
-                transforms.append(existing["transform"])
-            if transforms:
-                existing["transform"] = " ".join(transforms)
-
-            # Keep d attribute (always from defs)
-            # Rebuild the element
-            attr_parts = " ".join(f'{k}="{v}"' for k, v in existing.items() if k != "id")
-            result = f"<{inner_tag} {attr_parts}/>"
-            return result
-
-        text = re.sub(r"<use\s[^>]*/>", expand_use, text)
-        return text.encode("utf-8")
-    except Exception:
-        return svg_bytes
 
 
 # color cycle
